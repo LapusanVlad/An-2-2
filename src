@@ -1,0 +1,432 @@
+import random, csv, os, multiprocessing as mp
+from typing import List, Tuple, Dict
+
+
+class JocCandyCrush:
+    def __init__(self, seed=None):
+        # Initializeaza generatorul de numere aleatoare cu seed pentru rezultate reproducibile
+        if seed:
+            random.seed(seed)
+
+        # Creaza tabla de joc 11x11 cu 4 culori (1-4) pentru mai multe combinatii
+        self.tabla = [[random.randint(1, 4) for _ in range(11)] for _ in range(11)]
+
+        # Initializeaza contoarele: punctaj total, numar de swap-uri, numar de cascade
+        self.punctaj_total = self.swap_count = self.cascade_count = 0
+
+        # Elimina formatiunile initiale de pe tabla prin procesarea cascadei
+        # Acest pas asigura ca jocul incepe cu o tabla fara formatiuni valide
+        while self.proceseaza_cascade():
+            pass
+
+    def detecteaza_formatiuni(self):
+        # Initializeaza lista pentru formatiuni detectate si setul pentru celule utilizate
+        format_iuni, vizitat = [], set()
+
+        # DETECTIE LINII ORIZONTALE
+        # Parcurge fiecare rand al tablei
+        for i in range(11):
+            j = 0
+            # Parcurge fiecare coloana pana la pozitia 8 (pentru linii de cel putin 3)
+            while j <= 8:
+                # Verifica daca celula curenta nu este goala
+                if self.tabla[i][j] != 0:
+                    culoare = self.tabla[i][j]  # Salveaza culoarea de referinta
+
+                    # VERIFICARE LINII DE 5 BOMBOANE
+                    # Daca suntem suficient de departe de margine pentru o linie de 5
+                    if j <= 6:
+                        # Verifica daca urmatoarele 4 celule au aceeasi culoare
+                        if all(self.tabla[i][j + k] == culoare for k in range(5)):
+                            # Creeaza lista cu celulele formatiunii
+                            celule = [(i, j + x) for x in range(5)]
+                            # Verifica daca niciuna dintre celule nu a fost deja utilizata
+                            if not any(c in vizitat for c in celule):
+                                # Adauga formatiunea cu punctajul pentru linie de 5
+                                format_iuni.append((celule, 50))
+                                # Marcheaza celulele ca fiind utilizate
+                                vizitat.update(celule)
+                                j += 5  # Sari peste celulele verificate
+                                continue  # Continua cu urmatoarea pozitie
+
+                    # VERIFICARE LINII DE 4 BOMBOANE
+                    # Daca suntem suficient de departe de margine pentru o linie de 4
+                    if j <= 7:
+                        if all(self.tabla[i][j + k] == culoare for k in range(4)):
+                            celule = [(i, j + x) for x in range(4)]
+                            if not any(c in vizitat for c in celule):
+                                format_iuni.append((celule, 10))  # 10 puncte pentru linie de 4
+                                vizitat.update(celule)
+                                j += 4
+                                continue
+
+                    # VERIFICARE LINII DE 3 BOMBOANE
+                    # Verifica daca cele 3 celule consecutive au aceeasi culoare
+                    if self.tabla[i][j] == self.tabla[i][j + 1] == self.tabla[i][j + 2]:
+                        celule = [(i, j), (i, j + 1), (i, j + 2)]
+                        if not any(c in vizitat for c in celule):
+                            format_iuni.append((celule, 5))  # 5 puncte pentru linie de 3
+                            vizitat.update(celule)
+                        j += 3  # Sari peste cele 3 celule verificate
+                    else:
+                        j += 1  # Avanseaza la urmatoarea celula
+                else:
+                    j += 1  # Celula este goala, avanseaza
+
+        # DETECTIE LINII VERTICALE
+        # Parcurge fiecare coloana a tablei
+        for j in range(11):
+            i = 0
+            # Parcurge fiecare rand pana la pozitia 8
+            while i <= 8:
+                if self.tabla[i][j] != 0:
+                    culoare = self.tabla[i][j]
+
+                    # VERIFICARE LINII VERTICALE DE 5 BOMBOANE
+                    if i <= 6:
+                        if all(self.tabla[i + k][j] == culoare for k in range(5)):
+                            celule = [(i + x, j) for x in range(5)]
+                            if not any(c in vizitat for c in celule):
+                                format_iuni.append((celule, 50))
+                                vizitat.update(celule)
+                                i += 5
+                                continue
+
+                    # VERIFICARE LINII VERTICALE DE 4 BOMBOANE
+                    if i <= 7:
+                        if all(self.tabla[i + k][j] == culoare for k in range(4)):
+                            celule = [(i + x, j) for x in range(4)]
+                            if not any(c in vizitat for c in celule):
+                                format_iuni.append((celule, 10))
+                                vizitat.update(celule)
+                                i += 4
+                                continue
+
+                    # VERIFICARE LINII VERTICALE DE 3 BOMBOANE
+                    if self.tabla[i][j] == self.tabla[i + 1][j] == self.tabla[i + 2][j]:
+                        celule = [(i, j), (i + 1, j), (i + 2, j)]
+                        if not any(c in vizitat for c in celule):
+                            format_iuni.append((celule, 5))
+                            vizitat.update(celule)
+                        i += 3
+                    else:
+                        i += 1
+                else:
+                    i += 1
+
+        # Returneaza lista cu toate formatiunile detectate
+        return format_iuni
+
+    def elimina_formatiuni(self, format_iuni):
+        # Daca nu exista formatiuni de eliminat, returneaza 0 puncte
+        if not format_iuni:
+            return 0
+
+        # Initializeaza setul pentru celulele de eliminat si contorul de punctaj
+        celule_eliminate, punctaj = set(), 0
+
+        # Parcurge fiecare formatiune in ordinea in care au fost detectate
+        for celule, pct in format_iuni:
+            # Filtreaza doar celulele care nu au fost deja eliminate
+            celule_noi = [c for c in celule if c not in celule_eliminate]
+            # Daca exista celule noi de eliminat
+            if celule_noi:
+                # Adauga celulele la setul de celule eliminate
+                celule_eliminate.update(celule_noi)
+                # Adauga punctajul formatiunii la total
+                punctaj += pct
+
+        # Elimina efectiv celulele din tabla prin setarea lor la 0 (gol)
+        for i, j in celule_eliminate:
+            self.tabla[i][j] = 0
+
+        # Returneaza punctajul total obtinut din eliminare
+        return punctaj
+
+    def aplica_gravitatate(self):
+        # Aplica gravitatea pentru fiecare coloana in parte
+        for j in range(11):
+            coloana = []  # Lista temporara pentru bomboanele din coloana
+
+            # Parcurge coloana de jos in sus (de la randul 10 la 0)
+            for i in range(10, -1, -1):
+                # Daca celula nu este goala, o adauga in lista
+                if self.tabla[i][j] != 0:
+                    coloana.append(self.tabla[i][j])
+
+            # Completeaza restul coloanei cu valori 0 (spatii goale) in partea de sus
+            while len(coloana) < 11:
+                coloana.append(0)
+
+            # Reconstruieste coloana in tabla (inverseaza ordinea)
+            for i in range(11):
+                self.tabla[10 - i][j] = coloana[i]
+
+    def umplere_goale(self):
+        # Parcurge fiecare celula a tablei
+        for i in range(11):
+            for j in range(11):
+                # Daca celula este goala, o umple cu o bomboana aleatoare
+                if self.tabla[i][j] == 0:
+                    self.tabla[i][j] = random.randint(1, 3)
+
+    def proceseaza_cascade(self):
+        # Initializeaza contorul de punctaj pentru cascadele curente
+        punctaj_total = 0
+
+        # Proceseaza cascade in bucla pana cand nu mai exista formatiuni
+        while True:
+            # Detecteaza toate formatiunile valide de pe tabla
+            format_iuni = self.detecteaza_formatiuni()
+            # Daca nu exista formatiuni, iese din bucla
+            if not format_iuni:
+                break
+
+            # Elimina formatiunile si obtine punctajul
+            punctaj = self.elimina_formatiuni(format_iuni)
+            # Daca eliminarea nu a produs puncte, iese din bucla
+            if punctaj == 0:
+                break
+
+            # Adauga punctajul la totalul cascadei
+            punctaj_total += punctaj
+            # Aplica gravitatea pentru a cobori bomboanele
+            self.aplica_gravitatate()
+            # Umple spatiile goale cu bomboane noi
+            self.umplere_goale()
+            # Incrementeaza contorul de cascade
+            self.cascade_count += 1
+
+        # Adauga punctajul total al cascadei la punctajul general
+        self.punctaj_total += punctaj_total
+        # Returneaza True daca s-au produs eliminari, False altfel
+        return punctaj_total > 0
+
+    def evalueaza_swap_simplu(self, i1, j1, i2, j2):
+        """Evaluare rapida a unui swap potential"""
+        # Verifica daca pozitiile sunt valide
+        if not (0 <= i1 < 11 and 0 <= j1 < 11 and 0 <= i2 < 11 and 0 <= j2 < 11):
+            return 0
+
+        # Executa swap-ul temporar
+        self.tabla[i1][j1], self.tabla[i2][j2] = self.tabla[i2][j2], self.tabla[i1][j1]
+
+        # Initializeaza contorul pentru punctajul potential
+        punctaj_potential = 0
+
+        # Verifica potentialul pentru fiecare celula implicata in swap
+        for i, j in [(i1, j1), (i2, j2)]:
+            # VERIFICARE LINII ORIZONTALE LUNGI
+            # Parcurge pozitiile de start posibile pentru linii de 4
+            for start_j in range(max(0, j - 3), min(8, j + 1)):
+                # Verifica daca exista o linie orizontala de 4 bomboane identice
+                if all(self.tabla[i][start_j + k] == self.tabla[i][start_j] != 0 for k in range(4)):
+                    punctaj_potential += 20  # Bonus pentru linii lungi
+                    break  # Iesi din bucla interioara
+
+            # VERIFICARE LINII VERTICALE LUNGI
+            # Parcurge pozitiile de start posibile pentru linii de 4
+            for start_i in range(max(0, i - 3), min(8, i + 1)):
+                # Verifica daca exista o linie verticala de 4 bomboane identice
+                if all(self.tabla[start_i + k][j] == self.tabla[start_i][j] != 0 for k in range(4)):
+                    punctaj_potential += 20  # Bonus pentru linii lungi
+                    break  # Iesi din bucla interioara
+
+        # Anuleaza swap-ul temporar
+        self.tabla[i1][j1], self.tabla[i2][j2] = self.tabla[i2][j2], self.tabla[i1][j1]
+
+        # Returneaza scorul de evaluare
+        return punctaj_potential
+
+    def gaseste_swap_optim(self):
+        """Gaseste cel mai bun swap disponibil pe tabla"""
+        # Initializeaza variabilele pentru cel mai bun swap si scor
+        best_swap, best_score = None, -1
+
+        # Parcurge fiecare celula a tablei
+        for i in range(11):
+            for j in range(11):
+                # Verifica doar vecinii din dreapta si jos (evita dublarea)
+                for di, dj in [(0, 1), (1, 0)]:
+                    # Calculeaza pozitia vecinului
+                    ni, nj = i + di, j + dj
+                    # Verifica daca vecinul este in interiorul tablei
+                    if ni < 11 and nj < 11:
+                        # Evalueaza swap-ul curent
+                        score = self.evalueaza_swap_simplu(i, j, ni, nj)
+                        # Daca acest swap are un scor mai bun, il salveaza
+                        if score > best_score:
+                            best_score, best_swap = score, (i, j, ni, nj)
+
+        # Daca nu s-a gasit niciun swap optim, foloseste metoda de fallback
+        if best_swap is None:
+            return self.gaseste_swap_valid()
+
+        # Returneaza cel mai bun swap gasit
+        return best_swap
+
+    def gaseste_swap_valid(self):
+        """Metoda de fallback: gaseste primul swap valid disponibil"""
+        # Parcurge fiecare celula a tablei
+        for i in range(11):
+            for j in range(11):
+                # Verifica vecinii din dreapta si jos
+                for di, dj in [(0, 1), (1, 0)]:
+                    ni, nj = i + di, j + dj
+                    # Verifica daca vecinul este valid
+                    if ni < 11 and nj < 11:
+                        # Testeaza swap-ul temporar
+                        self.tabla[i][j], self.tabla[ni][nj] = self.tabla[ni][nj], self.tabla[i][j]
+                        # Verifica daca swap-ul creeaza formatiuni
+                        are_formatiuni = len(self.detecteaza_formatiuni()) > 0
+                        # Anuleaza swap-ul temporar
+                        self.tabla[i][j], self.tabla[ni][nj] = self.tabla[ni][nj], self.tabla[i][j]
+                        # Daca swap-ul este valid, il returneaza
+                        if are_formatiuni:
+                            return (i, j, ni, nj)
+        # Daca nu s-a gasit niciun swap valid, returneaza None
+        return None
+
+    def ruleaza_joc(self):
+        """Functia principala care ruleaza un joc complet"""
+        # Initializeaza variabila pentru numarul de swap-uri la care s-a atins 10k
+        moves_to_10000 = None
+
+        # BUCLA PRINCIPALA A JOCULUI
+        # Ruleaza jocul pana cand se atinge 10.000 de puncte
+        while self.punctaj_total < 10000:
+            # Gaseste cel mai bun swap disponibil
+            swap = self.gaseste_swap_optim()
+            # Daca nu exista swap-uri valide, iese din bucla
+            if not swap:
+                break
+
+            # Extrage coordonatele swap-ului
+            i, j, ni, nj = swap
+            # Executa swap-ul pe tabla
+            self.tabla[i][j], self.tabla[ni][nj] = self.tabla[ni][nj], self.tabla[i][j]
+            # Incrementeaza contorul de swap-uri
+            self.swap_count += 1
+
+            # Proceseaza cascadele rezultate din swap
+            self.proceseaza_cascade()
+
+            # Verifica daca s-a atins pentru prima data pragul de 10.000 de puncte
+            if moves_to_10000 is None and self.punctaj_total >= 10000:
+                moves_to_10000 = self.swap_count  # Salveaza numarul de swap-uri
+
+            # OPRIRE DE SIGURANTA: evita bucle infinite
+            # Daca s-au facut 200 de swap-uri si inca nu s-a atins 10k, opreste
+            if self.swap_count >= 200:
+                break
+
+        # Determina motivul opririi jocului
+        stopping_reason = "REACHED_TARGET" if self.punctaj_total >= 10000 else "NO_MOVES"
+
+        # Returneaza dictionarul cu rezultatele jocului
+        return {
+            'punctaj': self.punctaj_total,  # Punctajul final
+            'swap_uri': self.swap_count,  # Numarul total de swap-uri
+            'cascade': self.cascade_count,  # Numarul total de cascade
+            'reached_target': self.punctaj_total >= 10000,  # Daca s-a atins tinta
+            'stopping_reason': stopping_reason,  # Motivul opririi
+            'moves_to_10000': moves_to_10000  # Swap-urile necesare pentru 10k
+        }
+
+
+def ruleaza_joc_proces(args):
+    """Functie care ruleaza un joc individual pentru procesarea paralela"""
+    # Extrage argumentele: game_id, numarul total de jocuri, id-ul procesului
+    game_id, total, proc_id = args
+    # Creeaza si ruleaza un joc nou cu seed-ul game_id pentru reproducibilitate
+    rezultat = JocCandyCrush(game_id).ruleaza_joc()
+    # Adauga id-ul jocului la rezultat
+    rezultat['game_id'] = game_id
+    # Determina statusul jocului (SUCCES/ESEC)
+    status = "SUCCES" if rezultat['reached_target'] else "ESEC"
+    # Afiseaza rezultatul jocului
+    print(f"Joc {game_id + 1}: {rezultat['punctaj']} puncte, {rezultat['swap_uri']} swap-uri, {status}")
+    # Returneaza rezultatul pentru colectare
+    return rezultat
+
+
+def main():
+    # Functia principala care coordoneaza simularea celor 100 de jocuri
+    # Afiseaza header-ul aplicatiei
+    print("Candy Crush")
+    print("Obiectiv: 10.000 puncte cu swap-uri minime")
+
+    # Seteaza numarul de jocuri
+    num_jocuri = 100
+    # Initializeaza lista pentru rezultate
+    rezultate = []
+
+    # Ruleaza fiecare joc secvential
+    for game_id in range(num_jocuri):
+        # Ruleaza jocul si adauga rezultatul la lista
+        rezultat = ruleaza_joc_proces((game_id, num_jocuri, 1))
+        rezultate.append(rezultat)
+
+        # Afiseaza progresul la fiecare 10 jocuri
+        if (game_id + 1) % 10 == 0:
+            # Calculeaza numarul de jocuri cu succes pana acum
+            succes = sum(1 for r in rezultate if r['reached_target'])
+            print(f"Progres: {game_id + 1}/100, Succes: {succes}\n")
+
+    # SALVARE REZULTATE CSV
+    # Creeaza directorul results daca nu exista
+    os.makedirs("results", exist_ok=True)
+    # Deschide fisierul CSV pentru scriere
+    with open("results/summary.csv", 'w', newline='') as f:
+        writer = csv.writer(f)
+        # Scrie header-ul fisierului CSV
+        writer.writerow(
+            ['game_id', 'points', 'swaps', 'total_cascades', 'reached_target', 'stopping_reason', 'moves_to_10000'])
+        # Scrie datele pentru fiecare joc
+        for r in rezultate:
+            # Formateaza valoarea moves_to_10000 (gol daca nu s-a atins tinta)
+            moves = r['moves_to_10000'] if r['moves_to_10000'] is not None else ''
+            # Scrie randul in CSV
+            writer.writerow(
+                [r['game_id'], r['punctaj'], r['swap_uri'], r['cascade'], r['reached_target'], r['stopping_reason'],
+                 moves])
+
+    # CALCUL STATISTICI
+    # Filtreaza jocurile care au atins tinta
+    succes = [r for r in rezultate if r['reached_target']]
+    # Calculeaza punctajul mediu
+    avg_points = sum(r['punctaj'] for r in rezultate) / len(rezultate)
+    # Calculeaza numarul mediu de swap-uri
+    avg_swaps = sum(r['swap_uri'] for r in rezultate) / len(rezultate)
+    # Calculeaza numarul mediu de swap-uri pentru a atinge 10k (doar pentru jocurile cu succes)
+    avg_moves = sum(r['moves_to_10000'] for r in succes) / len(succes) if succes else 0
+
+    # AFISARE REZULTATE
+    print(f"\nREZULTATE FINALE:")
+    print(f"Jocuri: {len(rezultate)}")
+    print(f"Jocuri cu succes: {len(succes)} ({len(succes) / len(rezultate) * 100:.1f}%)")
+    print(f"Punctaj mediu: {avg_points:.0f}")
+    print(f"Swap-uri medii: {avg_swaps:.1f}")
+    # Afiseaza swap-urile medii pentru 10k doar daca exista jocuri cu succes
+    if succes:
+        print(f"Swap-uri medii pentru 10k: {avg_moves:.1f}")
+
+    # ANALIZA DETALIATA SWAP-URI
+    # Extrage toate numerele de swap-uri
+    swap_counts = [r['swap_uri'] for r in rezultate]
+    print(f"\nDISTRIBUTIE SWAP-URI:")
+    print(f"Minim: {min(swap_counts)} swap-uri")
+    print(f"Maxim: {max(swap_counts)} swap-uri")
+    # Calculeaza distributia swap-urilor pe intervale
+    print(f"51-100 swap-uri: {sum(1 for s in swap_counts if 51 <= s <= 100)} jocuri")
+    print(f"101-150 swap-uri: {sum(1 for s in swap_counts if 101 <= s <= 150)} jocuri")
+    print(f"Peste 150 swap-uri: {sum(1 for s in swap_counts if s > 150)} jocuri")
+
+    # Afiseaza confirmarea salvarii datelor
+    print(f"\nDatele au fost salvate in fisierul: results/summary.csv")
+
+
+# Punctul de intrare al programului
+if __name__ == "__main__":
+    # Ruleaza functia principala
+    main()
