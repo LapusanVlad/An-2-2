@@ -1,5 +1,4 @@
-import random, csv, os, multiprocessing as mp
-from typing import List, Tuple, Dict
+import random, csv, os
 
 
 class JocCandyCrush:
