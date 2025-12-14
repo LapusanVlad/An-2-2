@@ -4,7 +4,6 @@ Python 3.11.0
 Librariile:
 CSV
 OS
-Multiprocessing
 Random
 
 Linie de 3 (orizontala sau verticala)  5 p
